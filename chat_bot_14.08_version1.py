@@ -1268,7 +1268,7 @@ def main():
 
         
         # --- Walk-forward OOS caption (robust) ---
-        try:
+    try:
             # 1) Текущи тикери от резултатите
             tickers = [r.get('ticker') for r in results] if 'results' in locals() else []
             tickers = [t for t in tickers if t]
