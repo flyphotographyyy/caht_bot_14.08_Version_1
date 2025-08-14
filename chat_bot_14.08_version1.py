@@ -1257,32 +1257,32 @@ def main():
                     except Exception:
                         pass
 
-        # Walk-forward OOS caption – ПОРТФЕЙЛЕН
-        try:
-            # Универз за портфейла: SP100 + текущите ти тикери (без дубликати)
-            univ = list({*SP100, *[r['ticker'] for r in results]})
-        
-            res_pf = portfolio_walkforward_backtest(
-                univ,
-                risk_profile,
-                CFG['wf']['train_months'],
-                CFG['wf']['test_months'],
-                CFG['wf']['top_k'],
-                CFG['wf']['rebalance'],
-                CFG['wf']['cost_bps'],
-                CFG['wf']['slip_bps'],
-                min_hold_days=CFG['wf'].get('min_hold_days', 7),
-            )
-        
-            st.caption(
-                f"📦 Portfolio OOS: CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
-                f"maxDD={res_pf.get('oos_maxDD', 0.0):.2%} · "
-                f"Sharpe~{res_pf.get('oos_sharpe', 0.0):.2f} · "
-                f"turnover={res_pf.get('oos_turnover', 0.0):.2f}"
-            )
-        except Exception as _err:
-            st.caption("📦 Portfolio OOS: unavailable")
 
-    
+        # Walk-forward OOS caption – ПОРТФЕЙЛЕН (guarded)
+        if 'results' in locals() and results:
+            try:
+                univ = list({*SP100, *[r['ticker'] for r in results]})
+                res_pf = portfolio_walkforward_backtest(
+                    univ,
+                    risk_profile,
+                    CFG['wf']['train_months'],
+                    CFG['wf']['test_months'],
+                    CFG['wf']['top_k'],
+                    CFG['wf']['rebalance'],
+                    CFG['wf']['cost_bps'],
+                    CFG['wf']['slip_bps'],
+                    min_hold_days=CFG['wf'].get('min_hold_days', 7),
+                )
+                st.caption(
+                    f"📦 Portfolio OOS: CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
+                    f"maxDD={res_pf.get('oos_maxDD', 0.0):.2%} · "
+                    f"Sharpe~{res_pf.get('oos_sharpe', 0.0):.2f} · "
+                    f"turnover={res_pf.get('oos_turnover', 0.0):.2f}"
+                )
+            except Exception as _err:
+                st.caption(f"📦 Portfolio OOS: unavailable ({_err})")
+        else:
+            st.caption("📦 Portfolio OOS: unavailable (no results)")
+
 if __name__ == "__main__":
     main()
