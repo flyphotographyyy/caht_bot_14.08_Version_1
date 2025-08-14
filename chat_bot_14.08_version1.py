@@ -893,47 +893,53 @@ def portfolio_walkforward_backtest(
 
 
                 # Кои от текущите да задържим (hysteresis + sell правило)
+                
                 keep: List[str] = []
                 for t in list(held.keys()):
-                    sc_now = 0.0
+                    sc_now = 0.0  # локален score за текущата позиция
+
                     # ако не е навършил min_hold_days → задържаме
                     if age.get(t, 0) < min_hold_days:
                         keep.append(t)
                         continue
+
                     # ако няма данни за днес — по-добре задържай
                     if t not in data or d not in data[t].index:
                         keep.append(t)
                         continue
+
                     row = data[t].loc[d]
                     sc_now = _score_simple(row)
+
                     # EV по режим за текущата позиция
                     ev_ok = False
                     if reg != 'unknown':
                         ev_info = lookup_ev(reg, sc_now)
                         if ev_info is not None and ev_info[0] > 0:
-                            ev_ok =True 
-                            
+                            ev_ok = True
+
                     rnk = rank_pos.get(t, 9999)
-                    # --- Nожо > тренд/моменти условия за задържане
+
+                    # --- НОВО > тренд/моменти условия за задържане (вътре в цикъла!) ---
+                    # Тренд: Close >= SMA200
                     trend_keep_ok = True
                     try:
                         trend_keep_ok = float(row['Close']) >= float(row['SMA200'])
                     except Exception:
                         trend_keep_ok = True
 
-                # Моментум > 6м да не е отрицателен
-            
-                mom_keep_ok = True
-                try:
-                    mom_keep_ok =float(data[t].loc[d, 'mom126']) >= 0.0
-                except Exception:
-                    mom_keep_ok = True 
-                # --- Край НОВО---
+                    # Моментум > 6м да не е отрицателен
+                    mom_keep_ok = True
+                    try:
+                        mom_keep_ok = float(data[t].loc[d, 'mom126']) >= 0.0
+                    except Exception:
+                        mom_keep_ok = True
+                    # --- Край НОВО ---
 
-                # Държим ако НЕ е SELL и не е изпаднал далеч от топа И тренд/мом са ОК
-                if (sc_now >= sell_thr) and ev_ok and (rnk <= top_k + slack) and trend_keep_ok and mom_keep_ok:
-                    keep.append(t)
-                
+                    # Държим ако НЕ е SELL и не е изпаднал далеч от топа И тренд/мом са ОК
+                    if (sc_now >= sell_thr) and ev_ok and (rnk <= top_k + slack) and trend_keep_ok and mom_keep_ok:
+                        keep.append(t)
+
                 # Добавяме нови от ranked до top_k
                 selected = list(dict.fromkeys(keep))  # unique & order
                 for t, _ in ranked:
@@ -941,6 +947,7 @@ def portfolio_walkforward_backtest(
                         break
                     if t not in selected:
                         selected.append(t)
+
 
                 # Пресмятане turnover и разходи 
                 # Тегла : инверзна волатилност с клемове(15% ..60%) 
