@@ -754,7 +754,6 @@ def backtest_with_atr(df: pd.DataFrame, risk_profile: str, regime: Dict, confirm
 
 # >>>>>>>>>>>>>>>>>>>>>>>>  ЗАМЕСТЕНА ФУНКЦИЯ  <<<<<<<<<<<<<<<<<<<<<<<<<<
 def portfolio_walkforward_backtest(
-                                    # ensure binding in function scope
     tickers: List[str],
     risk_profile: str,
     train_m: int = 18,
