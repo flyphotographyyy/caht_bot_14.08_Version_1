@@ -1257,11 +1257,11 @@ def main():
                     except Exception:
                         pass
 
-                # Walk-forward OOS caption – ПОРТФЕЙЛЕН
+        # Walk-forward OOS caption – ПОРТФЕЙЛЕН
         try:
             # Универз за портфейла: SP100 + текущите ти тикери (без дубликати)
             univ = list({*SP100, *[r['ticker'] for r in results]})
-
+        
             res_pf = portfolio_walkforward_backtest(
                 univ,
                 risk_profile,
@@ -1273,17 +1273,16 @@ def main():
                 CFG['wf']['slip_bps'],
                 min_hold_days=CFG['wf'].get('min_hold_days', 7),
             )
+        
+            st.caption(
+                f"📦 Portfolio OOS: CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
+                f"maxDD={res_pf.get('oos_maxDD', 0.0):.2%} · "
+                f"Sharpe~{res_pf.get('oos_sharpe', 0.0):.2f} · "
+                f"turnover={res_pf.get('oos_turnover', 0.0):.2f}"
+            )
+        except Exception as _err:
+            st.caption("📦 Portfolio OOS: unavailable")
 
-            if res_pf.get('oos_trades', 0) >= 0:
-                st.caption(
-                    f"📦 Portfolio OOS: CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
-                    f"maxDD={res_pf.get('oos_maxDD', 0.0):.2%} · "
-                    f"Sharpe~{res_pf.get('oos_sharpe', 0.0):.2f} · "
-                    f"turnover={res_pf.get('oos_turnover', 0.0):.2f}"
-                )
-        except Exception:
-            # не показваме грешката в UI, за да не пречи на основния поток
-            pass
-
+    
 if __name__ == "__main__":
     main()
