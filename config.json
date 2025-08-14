@@ -7,36 +7,69 @@
   "ev": {
     "horizon_days": 10,
     "min_n": 100,
+    "min_ev_pct": 0.007,               // изисквай EV ≥ +0.70% за 10 дни
     "fallback_bin": "60-79",
     "precalib_universe": "SP100",
     "rebuild_days": 7
   },
 
-    "wf": { "train_months": 18, "test_months": 6, "top_k": 3, "rebalance": "M", "cost_bps": 5, "slip_bps": 5, "min_hold_days": 15 },
+  "wf": {
+    "train_months": 24,                // по-дълъг train за по-стабилна калибрация
+    "test_months": 6,
+    "top_k": 4,
+    "rebalance": "M",
+    "cost_bps": 5,
+    "slip_bps": 5,
+    "min_hold_days": 7
+  },
 
-  "regime": { "vix_elevated": 20.0, "vix_high": 25.0 },
+  "regime": {
+    "vix_elevated": 20.0,
+    "vix_high": 25.0,
+    "vix_scale_elev": 0.60,            // при VIX >= 20: намали експозицията до 60%
+    "vix_scale_high": 0.35             // при VIX >= 25: намали експозицията до 35%
+  },
 
-  "volume": { "min_base": 1.2, "max_base": 1.5 },
+  "position_sizing": {
+    "vol_clamp_min": 0.20,             // clamp на теглата по волатилност
+    "vol_clamp_max": 0.50
+  },
+
+  "score": {
+    "base": {                          // базови прагове за score (ако кодът ги ползва)
+      "conservative": 68,
+      "balanced": 65,
+      "aggressive": 60
+    },
+    "buy_offset": 5,                   // buy_thr = base + 5
+    "sell_gap": 12,                    // sell_thr = buy_thr - 12
+    "slack": 2
+  },
+
+  "risk": {
+    "max_positions": 8,
+    "sector_cap_pct": 0.25,            // максимум 25% на сектор
+    "daily_risk_budget": 0.12
+  },
+
+  "volume": {
+    "min_base": 1.2,
+    "max_base": 1.5
+  },
 
   "news": {
-    "sentiment_cap_points": 5, "intraday_weight": 0.25,
+    "sentiment_cap_points": 5,
+    "intraday_weight": 0.25,
     "opinion_stoplist": [
       "opinion", "rumor", "speculative", "blog",
       "downgrade", "upgrade", "price target", "short seller"
     ]
   },
 
-  "risk": {
-    "max_positions": 8,
-    "sector_cap_pct": 0.30,
-    "daily_risk_budget": 0.15
-  },
-
   "net": {
     "sec_rps": 5,
     "timeout": 12,
     "retries": 3,
-    "backoff": 0.75,
-    "ua": "SignalsPro/1.0 (contact: ale4ak@gmail.com)"
+    "backoff": 0.75
   }
 }
