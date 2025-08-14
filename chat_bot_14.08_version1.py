@@ -757,25 +757,27 @@ def backtest_with_atr(df: pd.DataFrame, risk_profile: str, regime: Dict, confirm
 def portfolio_walkforward_backtest(
     tickers: List[str],
     risk_profile: str,
-    train_m: int = 18,
+    train_m: int = 24,
     test_m: int = 6,
     top_k: int = 4,
-    rebalance: str = "W-MON",   # weekly rebal by default
+    rebalance: str = "W-MON",   # седмичен ребаланс по подразбиране
     cost_bps: int = 5,
     slip_bps: int = 5,
     min_hold_days: int = 7,
 ) -> Dict:
     """
-    Rolling walk-forward backtest (OOS)
-    - вход само при bull + неутрален/положителен SPY 6m моментум
-    - вход на тикер: score, Close>SMA200, mom>SPY, vol<=60%, EV>0
-    - изход: hysteresis + Close<SMA200 или mom<0 (след min_hold_days)
-    - тегла: inverse-volatility, clamp [0.20..0.55], риск-адаптер по VIX
+    Walk-forward OOS портфейлен тест с по-устойчива селекция:
+    - вход само при bull + SPY 6м mom ≥ 0
+    - кандидат: Close>SMA200, волатилност ≤ 60%
+    - ранк: 0.6*mom126 + 0.3*rel_strength(SMA200) + 0.1*EV
+    - задържане: min_hold_days, Close≥SMA200, mom126≥0 (hysteresis)
+    - тегла: equal-weight (по-често стабилно за momentum)
     """
+
     if not tickers:
         return {"oos_trades": 0, "oos_equity": 1.0, "oos_CAGR": 0.0, "oos_maxDD": 0.0, "oos_turnover": 0.0, "oos_sharpe": 0.0}
 
-    # 1) История
+    # -------- 1) Данни
     data: Dict[str, pd.DataFrame] = {}
     hist_days = int((train_m + test_m) * 22 * 3)
     for t in tickers:
@@ -784,9 +786,12 @@ def portfolio_walkforward_backtest(
             continue
         df = compute_indicators(df)
         # допълнителни полета за филтри
-        ret1 = df["Close"].pct_change()
-        df["vol20"] = ret1.rolling(20).std() * np.sqrt(252)
-        df["mom126"] = df["Close"].pct_change(126)
+        try:
+            df["vol20"]  = df["Close"].pct_change().rolling(20).std() * np.sqrt(252)
+            df["mom63"]  = df["Close"].pct_change(63)
+            df["mom126"] = df["Close"].pct_change(126)
+        except Exception:
+            pass
         data[t] = df
 
     if not data:
@@ -794,20 +799,20 @@ def portfolio_walkforward_backtest(
 
     all_idx = pd.DatetimeIndex(sorted(set().union(*[df.index for df in data.values()])))
 
-    # SPY режим + 6м моментум
+    # SPY за режим + 6м моментум
     spy = build_spy_for_regime(1200)
     try:
         spy["mom126"] = spy["Close"].pct_change(126)
     except Exception:
         pass
 
-    # Прагова логика (по-строга от преди)
-    base_buy = {"conservative": 67, "balanced": 62, "aggressive": 57}[risk_profile]
-    buy_thr  = base_buy + 3
-    sell_thr = buy_thr - 8       # hysteresis
+    # прагове (малко по-меки, за да не стоиш в кеш)
+    base_buy = {"conservative": 67, "balanced": 62, "aggressive": 57}.get(risk_profile, 62)
+    buy_thr  = base_buy + 2
+    sell_thr = buy_thr - 10
     slack    = 2
 
-    # 2) Rolling
+    # -------- 2) Rolling
     step    = int(test_m * 22)
     start_i = int(train_m * 22)
     if len(all_idx) <= start_i + 5:
@@ -821,7 +826,6 @@ def portfolio_walkforward_backtest(
 
     held: Dict[str, float] = {}
     age: Dict[str, int] = {}
-    last_px: Dict[str, float] = {}
 
     for seg_start in range(start_i, len(all_idx) - 1, step):
         seg_end  = min(seg_start + step, len(all_idx) - 1)
@@ -829,7 +833,7 @@ def portfolio_walkforward_backtest(
         if len(test_idx) < 5:
             break
 
-        # ---- седмични ребаланси дати
+        # ребаланс дати (седмично/месечно)
         if rebalance.upper().startswith("W"):
             rebals = pd.date_range(test_idx[0], test_idx[-1], freq="W-MON")
         else:
@@ -838,7 +842,7 @@ def portfolio_walkforward_backtest(
         for d in test_idx:
             is_reb = d in rebals
 
-            # режим + SPY mom
+            # --- режим
             reg = "unknown"; spy_mom = 0.0
             try:
                 idx = d
@@ -850,63 +854,75 @@ def portfolio_walkforward_backtest(
             except Exception:
                 reg = "unknown"
 
-            # --- селекция (влизаме само ако пазарът е bull и SPY mom>=0)
-            ranked: List[Tuple[str, int]] = []
+            ranked: List[Tuple[str, float]] = []
+            rank_pos: Dict[str, int] = {}
+
+            # --- селекция (само ако bull + SPY mom≥0)
             if is_reb and reg == "bull" and spy_mom >= 0.0:
+                # събираме кандидати с композитен ранк
+                comps: List[Tuple[str, float]] = []
                 for t, df in data.items():
                     if d not in df.index:
                         continue
                     row = df.loc[d]
-                    sc = _score_simple(row)
+                    sc  = _score_simple(row)
 
-                    close  = float(row.get("Close", float("nan")))
-                    sma50  = float(row["SMA50"])  if "SMA50"  in row else float("nan")
-                    sma200 = float(row["SMA200"]) if "SMA200" in row else float("nan")
+                    close  = float(row.get("Close", np.nan))
+                    sma50  = float(row["SMA50"])  if "SMA50"  in row else np.nan
+                    sma200 = float(row["SMA200"]) if "SMA200" in row else np.nan
+                    vol_t  = float(row["vol20"])  if "vol20"   in row else 0.50
+                    mom_t  = float(row["mom126"]) if "mom126" in row else -1.0
 
+                    # тренд
                     trend_ok = False
                     if np.isfinite(sma50) and np.isfinite(sma200):
                         trend_ok = (close > sma50) and (sma50 > sma200)
                     elif np.isfinite(sma200):
                         trend_ok = (close > sma200)
+                    if not trend_ok:
+                        continue
 
-                    mom_t  = float(row["mom126"]) if "mom126" in row else -1.0
-                    mom_ok = (mom_t > spy_mom)
-                    vol_t  = float(row["vol20"]) if "vol20"   in row else 0.50
-                    vol_ok = (vol_t <= 0.60)
+                    # волатилност
+                    if not np.isfinite(vol_t) or vol_t > 0.60:
+                        continue
 
-                    # EV матч (среда >0) по режим
-                    ev_ok = False
+                    # EV по режим (мека проверка – допускаме ≥ 0.0)
+                    ev_ok = True
+                    ev_val = 0.0
                     if reg != "unknown":
                         ev = lookup_ev(reg, sc)
-                        if ev is not None and ev[0] > 0:
-                            ev_ok = True
+                        if ev is not None:
+                            ev_val = float(ev[0] or 0.0)   # в десетична форма (напр. 0.005)
+                        else:
+                            ev_ok = False
 
-                    if sc >= (buy_thr + 4) and trend_ok and mom_ok and vol_ok and ev_ok:
-                        ranked.append((t, sc))
+                    # относителна сила спрямо SMA200 (ако липсва – 0)
+                    try:
+                        rels = (close / sma200) - 1.0 if np.isfinite(sma200) else 0.0
+                    except Exception:
+                        rels = 0.0
 
-            ranked.sort(key=lambda x: x[1], reverse=True)
-            rank_pos = {t: i for i, (t, _) in enumerate(ranked)}
+                    if ev_ok:
+                        # композитен ранк (доминира 6м mom)
+                        rank_score = 0.6 * mom_t + 0.3 * rels + 0.1 * ev_val
+                        comps.append((t, rank_score))
 
-            # --- кои да задържим
+                # сортирай и вземи top_k
+                comps.sort(key=lambda x: x[1], reverse=True)
+                ranked = comps[:top_k]
+                rank_pos = {t: i for i, (t, _) in enumerate(ranked)}
+
+            # --- задържане
             keep: List[str] = []
             for t in list(held.keys()):
-                # min hold guard
                 if age.get(t, 0) < min_hold_days:
                     keep.append(t)
                     continue
                 if t not in data or d not in data[t].index:
-                    keep.append(t)
-                    continue
+                    keep.append(t); continue
 
                 row = data[t].loc[d]
                 sc_now = _score_simple(row)
-
-                # текущ EV (по режим)
-                ev_ok = False
-                if reg != "unknown":
-                    ev = lookup_ev(reg, sc_now)
-                    if ev is not None and ev[0] > 0:
-                        ev_ok = True
 
                 # тренд/моментум за задържане
                 try:
@@ -919,47 +935,33 @@ def portfolio_walkforward_backtest(
                     mom_keep_ok = True
 
                 rnk = rank_pos.get(t, 9999)
+
+                # EV текущо (ако е налично)
+                ev_ok = True
+                if reg != "unknown":
+                    ev = lookup_ev(reg, sc_now)
+                    if ev is None:
+                        ev_ok = True  # не наказваме липса на EV тук
+
                 if (sc_now >= sell_thr) and ev_ok and (rnk <= top_k + slack) and trend_keep_ok and mom_keep_ok:
                     keep.append(t)
 
-            # --- добавяме нови до top_k
+            # --- добави нови до top_k
             selected = list(dict.fromkeys(keep))
-            for t, _ in ranked:
+            for t, _rs in ranked:
                 if len(selected) >= top_k:
                     break
                 if t not in selected:
                     selected.append(t)
 
-            # --- тегла (inverse-volatility) + риск-адаптер по VIX
+            # --- тегла equal-weight (по-стабилно OOS)
             new_w: Dict[str, float] = {}
             if selected:
-                vols = []
+                w_each = 1.0 / float(len(selected))
                 for t in selected:
-                    try:
-                        v = float(data[t].loc[d, "vol20"])
-                    except Exception:
-                        v = 0.35
-                    v = min(max(v, 0.20), 0.55)   # clamp
-                    vols.append(v)
+                    new_w[t] = w_each
 
-                inv = np.array([1.0 / v for v in vols], dtype=float)
-                w   = inv / inv.sum()
-
-                # риск адаптер (по VIX от CFG['regime'])
-                vix = float(CFG["regime"].get("vix_high", 25.0))
-                vix_elev = float(CFG["regime"].get("vix_elevated", 20.0))
-                vix_today = CFG["regime"].get("vix", None)  # ако подаваме live VIX някъде
-                risk_cut = 1.0
-                if vix_today is not None:
-                    if vix_today >= vix:      risk_cut = 0.65
-                    elif vix_today >= vix_elev: risk_cut = 0.80
-
-                for t, wi in zip(selected, w):
-                    new_w[t] = float(max(0.0, wi * risk_cut))
-            else:
-                new_w = {}
-
-            # --- turnover / транзакционни разходи
+            # turnover/разходи
             t_over = 0.0
             for t in set(list(held.keys()) + list(new_w.keys())):
                 w_old = held.get(t, 0.0)
@@ -972,32 +974,39 @@ def portfolio_walkforward_backtest(
 
             held = new_w
 
-            # --- дневна доходност
+            # дневна доходност
             if held:
                 day_ret = 0.0
                 for t, w in held.items():
-                    if d in data[t].index and d + pd.Timedelta(days=1) in data[t].index:
-                        px0 = float(data[t].loc[d, "Close"])
-                        px1 = float(data[t].loc[d + pd.Timedelta(days=1), "Close"])
-                        r   = (px1 / px0) - 1.0
-                        day_ret += w * r
+                    di = d
+                    if di not in data[t].index:
+                        continue
+                    # следващата дата в индекса (грубо; достатъчно за OOS)
+                    try:
+                        next_i = data[t].index.get_loc(di) + 1
+                        if next_i < len(data[t].index):
+                            px0 = float(data[t].loc[di, "Close"])
+                            px1 = float(data[t].iloc[next_i]["Close"])
+                            r   = (px1 / px0) - 1.0
+                            day_ret += w * r
+                    except Exception:
+                        pass
                 equity *= (1.0 + day_ret)
                 daily_rets.append(day_ret)
 
-            # ъпдейт възраст
+            # възраст
             for t in list(held.keys()) + list(age.keys()):
                 age[t] = (age.get(t, 0) + 1) if t in held else 0
 
-    # Метрики
+    # -------- 3) Метрики
     if len(daily_rets) > 1:
         ret   = np.array(daily_rets, dtype=float)
         cagr  = (equity ** (252.0 / max(1, len(ret)))) - 1.0
         dd    = 0.0
         peak  = 1.0
         eq    = 1.0
-        series = []
         for r in ret:
-            eq *= (1.0 + r); peak = max(peak, eq); dd = min(dd, eq / peak - 1.0); series.append(eq)
+            eq *= (1.0 + r); peak = max(peak, eq); dd = min(dd, eq / peak - 1.0)
         vol   = float(np.std(ret)) * np.sqrt(252.0)
         sharpe = float(np.mean(ret)) / vol if vol > 0 else 0.0
         turn_yr = float(turnover_sum) * (252.0 / max(1, len(ret)))
@@ -1012,6 +1021,7 @@ def portfolio_walkforward_backtest(
         "oos_turnover": float(turn_yr),
         "oos_sharpe": float(sharpe),
     }
+
 # <<<<<<<<<<<<<<<<<<<<<<  END IMPROVED OOS BACKTEST  >>>>>>>>>>>>>>>>>>>>>>>>
 
 
