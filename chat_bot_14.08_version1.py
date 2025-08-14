@@ -1268,24 +1268,28 @@ def main():
 
         
         # --- Walk-forward OOS caption (robust) ---
-    try:
-            # 1) Текущи тикери от резултатите
-            tickers = [r.get('ticker') for r in results] if 'results' in locals() else []
-            tickers = [t for t in tickers if t]
+                # === OOS BLOCK START (robust, always prints) ===
+        st.caption(" ")  # spacer – ако това не се вижда, значи блокът е извън main или след return
 
-            if not tickers:
+        try:
+            _res = locals().get('results', None)
+            if not _res:
                 st.caption("📦 Portfolio OOS: no signals → nothing to backtest")
             else:
-                # 2) Универсум: SP100 (ако го има) + текущите тикери
+                # тикерите от панела
+                tickers = [r.get('ticker') for r in _res if r.get('ticker')]
+
+                # добави SP100 ако съществува
                 try:
                     base = set(SP100)
                 except Exception:
                     base = set()
                 univ = list(base.union(tickers)) if base else tickers
 
-                # 3) Безопасно четене на конфиг
-                wf = CFG.get('wf', {}) if 'CFG' in locals() else {}
-                risk_prof = risk_profile if 'risk_profile' in locals() else 'balanced'
+                # безопасно четене на конфиг
+                _CFG = locals().get('CFG', {})
+                wf = _CFG.get('wf', {})
+                risk_prof = locals().get('risk_profile', 'balanced')
 
                 res_pf = portfolio_walkforward_backtest(
                     univ,
@@ -1299,9 +1303,8 @@ def main():
                     min_hold_days=wf.get('min_hold_days', 7),
                 )
 
-                # 4) Рендер на метриките (fallback-и ако липсват)
                 st.caption(
-                    f"📦 Portfolio OOS: "
+                    "📦 Portfolio OOS: "
                     f"CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
                     f"maxDD={res_pf.get('oos_maxDD', 0.0):.2%} · "
                     f"Sharpe~{res_pf.get('oos_sharpe', 0.0):.2f} · "
@@ -1310,6 +1313,8 @@ def main():
 
         except Exception as e:
             st.caption(f"📦 Portfolio OOS: unavailable ({e})")
+        # === OOS BLOCK END ===
+ 
         # --- /Walk-forward OOS caption ---
 
 if __name__ == "__main__":
