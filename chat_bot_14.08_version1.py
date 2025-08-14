@@ -1266,31 +1266,51 @@ def main():
                         pass
 
 
-        # Walk-forward OOS caption – ПОРТФЕЙЛЕН (guarded)
-        if 'results' in locals() and results:
-            try:
-                univ = list({*SP100, *[r['ticker'] for r in results]})
+        
+        # --- Walk-forward OOS caption (robust) ---
+        try:
+            # 1) Текущи тикери от резултатите
+            tickers = [r.get('ticker') for r in results] if 'results' in locals() else []
+            tickers = [t for t in tickers if t]
+
+            if not tickers:
+                st.caption("📦 Portfolio OOS: no signals → nothing to backtest")
+            else:
+                # 2) Универсум: SP100 (ако го има) + текущите тикери
+                try:
+                    base = set(SP100)
+                except Exception:
+                    base = set()
+                univ = list(base.union(tickers)) if base else tickers
+
+                # 3) Безопасно четене на конфиг
+                wf = CFG.get('wf', {}) if 'CFG' in locals() else {}
+                risk_prof = risk_profile if 'risk_profile' in locals() else 'balanced'
+
                 res_pf = portfolio_walkforward_backtest(
                     univ,
-                    risk_profile,
-                    CFG['wf']['train_months'],
-                    CFG['wf']['test_months'],
-                    CFG['wf']['top_k'],
-                    CFG['wf']['rebalance'],
-                    CFG['wf']['cost_bps'],
-                    CFG['wf']['slip_bps'],
-                    min_hold_days=CFG['wf'].get('min_hold_days', 7),
+                    risk_prof,
+                    wf.get('train_months', 24),
+                    wf.get('test_months', 6),
+                    wf.get('top_k', 4),
+                    wf.get('rebalance', 'M'),
+                    wf.get('cost_bps', 5),
+                    wf.get('slip_bps', 5),
+                    min_hold_days=wf.get('min_hold_days', 7),
                 )
+
+                # 4) Рендер на метриките (fallback-и ако липсват)
                 st.caption(
-                    f"📦 Portfolio OOS: CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
+                    f"📦 Portfolio OOS: "
+                    f"CAGR={res_pf.get('oos_CAGR', 0.0):.2%} · "
                     f"maxDD={res_pf.get('oos_maxDD', 0.0):.2%} · "
                     f"Sharpe~{res_pf.get('oos_sharpe', 0.0):.2f} · "
                     f"turnover={res_pf.get('oos_turnover', 0.0):.2f}"
                 )
-            except Exception as _err:
-                st.caption(f"📦 Portfolio OOS: unavailable ({_err})")
-        else:
-            st.caption("📦 Portfolio OOS: unavailable (no results)")
+
+        except Exception as e:
+            st.caption(f"📦 Portfolio OOS: unavailable ({e})")
+        # --- /Walk-forward OOS caption ---
 
 if __name__ == "__main__":
     main()
