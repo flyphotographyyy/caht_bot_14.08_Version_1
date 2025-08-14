@@ -895,6 +895,7 @@ def portfolio_walkforward_backtest(
                 # Кои от текущите да задържим (hysteresis + sell правило)
                 keep: List[str] = []
                 for t in list(held.keys()):
+                    sc_now = 0.0
                     # ако не е навършил min_hold_days → задържаме
                     if age.get(t, 0) < min_hold_days:
                         keep.append(t)
