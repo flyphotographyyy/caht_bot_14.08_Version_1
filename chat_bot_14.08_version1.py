@@ -1260,10 +1260,10 @@ def main():
 
 
         # Walk-forward OOS caption – ПОРТФЕЙЛЕН (guarded)
-         if 'results' in locals() and results:
-             try:
-                 univ = list({*SP100, *[r['ticker'] for r in results]})
-                 res_pf = portfolio_walkforward_backtest(
+        if 'results' in locals() and results:
+            try:
+                univ = list({*SP100, *[r['ticker'] for r in results]})
+                res_pf = portfolio_walkforward_backtest(
                     univ,
                     risk_profile,
                     CFG['wf']['train_months'],
